@@ -1,0 +1,37 @@
+name: Render video
+
+on:
+  repository_dispatch:
+    types: [render_video]
+
+permissions:
+  contents: write
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar imagen y audio
+        run: |
+          curl -L "${{ github.event.client_payload.image_url }}" -o image.jpg
+          curl -L "${{ github.event.client_payload.audio_url }}" -o audio.mp3
+
+      - name: Armar video con FFmpeg (formato vertical, efecto zoom)
+        run: |
+          DURATION=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 audio.mp3)
+          FRAMES=$(python3 -c "print(int(float('$DURATION')*25))")
+          ffmpeg -y -loop 1 -i image.jpg -i audio.mp3 \
+            -filter_complex "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,zoompan=z='min(zoom+0.0015,1.3)':d=${FRAMES}:s=1080x1920:fps=25[v]" \
+            -map "[v]" -map 1:a -c:v libx264 -c:a aac -shortest -t "$DURATION" video.mp4
+
+      - name: Publicar el video como Release (le da una URL pública)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: video-${{ github.run_id }}
+          files: video.mp4
+
+      - name: Avisar a Make que el video ya está listo
+        run: |
+          curl -X POST "${{ github.event.client_payload.callback_url }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"video_url\": \"https://github.com/${{ github.repository }}/releases/download/video-${{ github.run_id }}/video.mp4\"}"
