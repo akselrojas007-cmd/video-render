@@ -11,10 +11,16 @@ jobs:
   render:
     runs-on: ubuntu-latest
     steps:
-      - name: Descargar imagen y audio
+      - name: Instalar edge-tts
+        run: pip install edge-tts
+
+      - name: Generar audio narrado (gratis, sin key)
+        run: |
+          edge-tts --voice es-MX-DaliaNeural --text "${{ github.event.client_payload.text }}" --write-media audio.mp3
+
+      - name: Descargar imagen de fondo
         run: |
           curl -L "${{ github.event.client_payload.image_url }}" -o image.jpg
-          curl -L "${{ github.event.client_payload.audio_url }}" -o audio.mp3
 
       - name: Armar video con FFmpeg (formato vertical, efecto zoom)
         run: |
