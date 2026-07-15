@@ -33,7 +33,7 @@ jobs:
           sentences = re.split(r'(?<=[.!?]) +', story)
           sentences = [s.strip() for s in sentences if s.strip()]
 
-          N = 4  # número de escenas
+          N = 9  # número de escenas
           chunk_size = max(1, len(sentences) // N)
           chunks = []
           for i in range(0, len(sentences), chunk_size):
