@@ -1,4 +1,4 @@
-ame: Render video
+name: Render video
 
 on:
   repository_dispatch:
