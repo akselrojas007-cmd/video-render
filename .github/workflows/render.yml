@@ -11,112 +11,18 @@ jobs:
   render:
     runs-on: ubuntu-latest
     steps:
-      - name: Instalar ffmpeg y Pillow
+      - name: Checkout repo (para traer render.py)
+        uses: actions/checkout@v4
+
+      - name: Instalar ffmpeg y librerias de Python
         run: |
           sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu
           pip install edge-tts Pillow requests
 
-      - name: Separar título y dividir la historia en escenas
-        run: |
-          python3 << 'PYEOF'
-          import re
-
-          raw = """${{ github.event.client_payload.text }}"""
-          title, story = raw.split("|||", 1)
-          title = title.strip()
-          story = story.strip()
-
-          with open("title.txt", "w") as f:
-              f.write(title)
-
-          # Dividir en oraciones
-          sentences = re.split(r'(?<=[.!?]) +', story)
-          sentences = [s.strip() for s in sentences if s.strip()]
-
-          N = 9  # número de escenas
-          chunk_size = max(1, len(sentences) // N)
-          chunks = []
-          for i in range(0, len(sentences), chunk_size):
-              chunks.append(" ".join(sentences[i:i+chunk_size]))
-          chunks = chunks[:N] if len(chunks) > N else chunks
-          # Si sobraron oraciones, se las pegamos al último chunk
-          if len(sentences) > chunk_size * len(chunks):
-              pass
-
-          for i, c in enumerate(chunks):
-              with open(f"scene_{i}.txt", "w") as f:
-                  f.write(c)
-
-          with open("scene_count.txt", "w") as f:
-              f.write(str(len(chunks)))
-          PYEOF
-
-      - name: Generar audio por escena
-        run: |
-          COUNT=$(cat scene_count.txt)
-          for i in $(seq 0 $((COUNT-1))); do
-            edge-tts --voice es-MX-DaliaNeural --file "scene_${i}.txt" --write-media "audio_${i}.mp3"
-          done
-
-      - name: Generar imagen por escena (mismo seed, mismo estilo)
-        run: |
-          COUNT=$(cat scene_count.txt)
-          SEED=$RANDOM
-          for i in $(seq 0 $((COUNT-1))); do
-            SCENE=$(cat "scene_${i}.txt")
-            PROMPT="Ilustracion estilo cuento infantil, calida y emotiva, pintura digital suave, colores pastel, sin texto, mismo gatito protagonista en todas las escenas. Escena: ${SCENE}"
-            ENCODED=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$PROMPT")
-            curl -L "https://image.pollinations.ai/prompt/${ENCODED}?width=1080&height=1920&seed=${SEED}&model=flux&nologo=true" -o "scene_${i}.jpg"
-            sleep 2
-          done
-
-      - name: Crear miniatura con el título superpuesto
-        run: |
-          python3 << 'PYEOF'
-          from PIL import Image, ImageDraw, ImageFont
-          import textwrap
-
-          img = Image.open("scene_0.jpg").convert("RGB")
-          draw = ImageDraw.Draw(img)
-
-          with open("title.txt") as f:
-              title = f.read().strip()
-
-          font_size = int(img.width / 10)
-          try:
-              font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
-          except:
-              font = ImageFont.load_default()
-
-          wrapped = textwrap.fill(title, width=14)
-          bbox = draw.multiline_textbbox((0, 0), wrapped, font=font, align="center")
-          text_w = bbox[2] - bbox[0]
-          x = (img.width - text_w) / 2
-          y = img.height * 0.68
-
-          for dx in range(-4, 5, 2):
-              for dy in range(-4, 5, 2):
-                  draw.multiline_text((x+dx, y+dy), wrapped, font=font, fill="black", align="center")
-          draw.multiline_text((x, y), wrapped, font=font, fill="white", align="center")
-
-          img.save("thumbnail.jpg", quality=92)
-          PYEOF
-
-      - name: Armar un clip de video por escena
-        run: |
-          COUNT=$(cat scene_count.txt)
-          for i in $(seq 0 $((COUNT-1))); do
-            DURATION=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "audio_${i}.mp3")
-            FRAMES=$(python3 -c "print(max(1,int(float('$DURATION')*25)))")
-            ffmpeg -y -loop 1 -i "scene_${i}.jpg" -i "audio_${i}.mp3" \
-              -filter_complex "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,zoompan=z='min(zoom+0.002,1.25)':d=${FRAMES}:s=1080x1920:fps=25[v]" \
-              -map "[v]" -map 1:a -c:v libx264 -c:a aac -shortest -t "$DURATION" "clip_${i}.mp4"
-            echo "file 'clip_${i}.mp4'" >> concat_list.txt
-          done
-
-      - name: Unir todas las escenas en un solo video
-        run: |
-          ffmpeg -y -f concat -safe 0 -i concat_list.txt -c copy video.mp4
+      - name: Generar video completo (escenas, movimiento, subtitulos)
+        env:
+          RENDER_TEXT: ${{ github.event.client_payload.text }}
+        run: python3 render.py
 
       - name: Publicar el video y la miniatura como Release
         uses: softprops/action-gh-release@v2
@@ -126,7 +32,7 @@ jobs:
             video.mp4
             thumbnail.jpg
 
-      - name: Avisar a Make que el video ya está listo
+      - name: Avisar a Make que el video ya esta listo
         run: |
           TITLE=$(cat title.txt)
           python3 -c "
